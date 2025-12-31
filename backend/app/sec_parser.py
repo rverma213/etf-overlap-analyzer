@@ -1,6 +1,7 @@
 """SEC EDGAR N-PORT filing parser for ETF holdings data."""
 
 import asyncio
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Optional
@@ -8,7 +9,6 @@ import aiohttp
 import logging
 from pathlib import Path
 import json
-import hashlib
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -198,16 +198,32 @@ async def _get_latest_nport_url(session: aiohttp.ClientSession, cik: str) -> Opt
         filings = data.get("filings", {}).get("recent", {})
         forms = filings.get("form", [])
         accession_numbers = filings.get("accessionNumber", [])
-        primary_docs = filings.get("primaryDocument", [])
 
         for i, form in enumerate(forms):
             if form in ("NPORT-P", "NPORT-P/A"):
-                accession = accession_numbers[i].replace("-", "")
-                primary_doc = primary_docs[i]
+                accession = accession_numbers[i]
+                accession_no_dash = accession.replace("-", "")
 
-                # Construct URL to the primary document
-                filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession}/{primary_doc}"
-                return filing_url
+                # Get the filing index to find the XML file
+                index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/index.json"
+                index_text = await _fetch_with_rate_limit(session, index_url)
+                index_data = json.loads(index_text)
+
+                # Look for the primary XML file (usually ends with .xml and contains nport)
+                for item in index_data.get("directory", {}).get("item", []):
+                    name = item.get("name", "")
+                    if name.endswith(".xml") and "nport" in name.lower():
+                        filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/{name}"
+                        logger.info(f"Found N-PORT XML file: {name}")
+                        return filing_url
+
+                # Fallback: look for any XML file that's not the primary document
+                for item in index_data.get("directory", {}).get("item", []):
+                    name = item.get("name", "")
+                    if name.endswith(".xml"):
+                        filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/{name}"
+                        logger.info(f"Found XML file: {name}")
+                        return filing_url
 
         logger.warning(f"No N-PORT filing found for CIK {cik}")
         return None
@@ -229,42 +245,90 @@ def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[
     """
     holdings = []
 
+    # Try to extract namespace from the XML content
+    ns_match = re.search(r'xmlns="([^"]+)"', xml_content)
+    default_ns = ns_match.group(1) if ns_match else ""
+
     try:
         root = ET.fromstring(xml_content)
     except ET.ParseError as e:
         logger.error(f"Failed to parse XML: {e}")
-        return holdings
+        # Try to clean the XML and parse again
+        try:
+            # Remove any BOM or leading whitespace
+            cleaned = xml_content.strip()
+            if cleaned.startswith('\ufeff'):
+                cleaned = cleaned[1:]
+            root = ET.fromstring(cleaned)
+        except ET.ParseError as e2:
+            logger.error(f"Failed to parse cleaned XML: {e2}")
+            return holdings
 
-    # N-PORT uses namespaces
-    namespaces = {
-        "nport": "http://www.sec.gov/edgar/nport",
-        "com": "http://www.sec.gov/edgar/common",
-    }
+    # Build namespace dict dynamically
+    namespaces = {}
+    if default_ns:
+        namespaces["ns"] = default_ns
 
-    # Try to find holdings with namespace
-    invstOrSecs = root.findall(".//nport:invstOrSec", namespaces)
+    # Try multiple approaches to find investment/security elements
+    invstOrSecs = []
 
-    # If no results, try without namespace (some filings vary)
+    # Approach 1: Try with detected namespace
+    if namespaces:
+        invstOrSecs = root.findall(".//{%s}invstOrSec" % default_ns)
+
+    # Approach 2: Try common SEC namespaces
     if not invstOrSecs:
-        invstOrSecs = root.findall(".//invstOrSec")
+        for ns_uri in [
+            "http://www.sec.gov/edgar/nport",
+            "http://www.sec.gov/edgar/nportfiling",
+            "http://www.sec.gov/edgar/document/nport",
+        ]:
+            invstOrSecs = root.findall(".//{%s}invstOrSec" % ns_uri)
+            if invstOrSecs:
+                default_ns = ns_uri
+                break
+
+    # Approach 3: Try without namespace using local-name()
+    if not invstOrSecs:
+        # Use iter to find elements by local name
+        invstOrSecs = [elem for elem in root.iter() if elem.tag.endswith("}invstOrSec") or elem.tag == "invstOrSec"]
+
+    logger.info(f"Found {len(invstOrSecs)} investment/security elements")
 
     for inv in invstOrSecs:
         try:
+            # Helper function to find element by local name
+            def find_elem(parent: ET.Element, local_name: str) -> Optional[ET.Element]:
+                # Try with namespace
+                if default_ns:
+                    elem = parent.find("{%s}%s" % (default_ns, local_name))
+                    if elem is not None:
+                        return elem
+                # Try without namespace
+                elem = parent.find(local_name)
+                if elem is not None:
+                    return elem
+                # Try iterating children
+                for child in parent:
+                    if child.tag.endswith("}" + local_name) or child.tag == local_name:
+                        return child
+                return None
+
             # Extract name
-            name_elem = inv.find("nport:name", namespaces) or inv.find("name")
-            name = name_elem.text if name_elem is not None else "Unknown"
+            name_elem = find_elem(inv, "name")
+            name = name_elem.text.strip() if name_elem is not None and name_elem.text else "Unknown"
 
             # Extract CUSIP
-            cusip_elem = inv.find("nport:cusip", namespaces) or inv.find("cusip")
-            cusip = cusip_elem.text if cusip_elem is not None else None
+            cusip_elem = find_elem(inv, "cusip")
+            cusip = cusip_elem.text.strip() if cusip_elem is not None and cusip_elem.text else None
 
             # Extract percentage of net assets
-            pct_elem = inv.find("nport:pctVal", namespaces) or inv.find("pctVal")
-            percentage = float(pct_elem.text) if pct_elem is not None else 0.0
+            pct_elem = find_elem(inv, "pctVal")
+            percentage = float(pct_elem.text) if pct_elem is not None and pct_elem.text else 0.0
 
             # Extract value
-            val_elem = inv.find("nport:valUSD", namespaces) or inv.find("valUSD")
-            value = float(val_elem.text) if val_elem is not None else None
+            val_elem = find_elem(inv, "valUSD")
+            value = float(val_elem.text) if val_elem is not None and val_elem.text else None
 
             if percentage > 0:  # Only include holdings with positive weight
                 holdings.append(Holding(

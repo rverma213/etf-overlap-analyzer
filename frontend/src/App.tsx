@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchETFs, analyzeOverlap } from './api';
-import { ETFInfo, OverlapResult } from './types';
+import type { ETFInfo, OverlapResult } from './types';
 
 function App() {
   const [etfs, setEtfs] = useState<ETFInfo[]>([]);
