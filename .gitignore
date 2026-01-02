@@ -8,3 +8,12 @@ venv/
 *.egg-info/
 dist/
 build/
+
+# Node
+node_modules/
+
+# Backend cache
+backend/cache/
+
+# Logs
+*.log
