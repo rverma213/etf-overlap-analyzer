@@ -1,5 +1,6 @@
 """FastAPI application for ETF Overlap Analyzer."""
 
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -19,9 +20,20 @@ app = FastAPI(
 )
 
 # Configure CORS for frontend
+# Allow localhost for dev and Render domains for production
+cors_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://etf-overlap-frontend.onrender.com",
+]
+
+# Also allow any custom frontend URL from environment
+if os.environ.get("FRONTEND_URL"):
+    cors_origins.append(os.environ["FRONTEND_URL"])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
