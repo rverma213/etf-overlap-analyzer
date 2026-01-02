@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: etf-overlap-backend
+    runtime: python
+    buildCommand: pip install uv && cd backend && uv sync --no-dev
+    startCommand: cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+    healthCheckPath: /health
+
+  - type: web
+    name: etf-overlap-frontend
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=86400
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
