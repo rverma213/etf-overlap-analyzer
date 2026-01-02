@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
 
     steps:
       - uses: actions/checkout@v4
@@ -22,20 +25,15 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: |
-          cd backend
-          uv sync
+        run: uv sync
 
       - name: Run linting
         run: |
-          cd backend
           uv run ruff check app/ tests/
           uv run black --check app/ tests/
 
       - name: Run tests with coverage
-        run: |
-          cd backend
-          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term
+        run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -43,3 +41,4 @@ jobs:
           files: backend/coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+          working-directory: ${{ github.workspace }}
