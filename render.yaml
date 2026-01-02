@@ -14,6 +14,12 @@ services:
     runtime: static
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: etf-overlap-backend
+          type: web
+          property: host
     headers:
       - path: /*
         name: Cache-Control

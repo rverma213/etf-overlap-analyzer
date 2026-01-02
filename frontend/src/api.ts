@@ -1,6 +1,8 @@
 import type { ETFInfo, OverlapResult } from './types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Handle both full URLs and hostnames from Render's fromService
+const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = envUrl.startsWith('http') ? envUrl : `https://${envUrl}`;
 
 export async function fetchETFs(): Promise<ETFInfo[]> {
   const response = await fetch(`${API_BASE}/api/etfs`);
