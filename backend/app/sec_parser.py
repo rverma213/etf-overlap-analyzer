@@ -35,8 +35,8 @@ ETF_INFO = {
     },
     "IVV": {
         "name": "iShares Core S&P 500 ETF",
-        "cik": "0000893818",
-        "series_id": "S000000104",
+        "cik": "0001100663",
+        "series_id": "S000004310",
     },
     "VOO": {
         "name": "Vanguard S&P 500 ETF",
@@ -176,61 +176,133 @@ async def _fetch_with_rate_limit(
         return await response.text()
 
 
-async def _get_latest_nport_url(session: aiohttp.ClientSession, cik: str) -> Optional[str]:
-    """Get the URL of the latest N-PORT filing for a CIK.
+async def _search_nport_by_series(
+    session: aiohttp.ClientSession, cik: str, series_id: str
+) -> Optional[str]:
+    """Search SEC EDGAR for NPORT filing by series ID using full-text search.
 
     Args:
         session: The aiohttp session.
         cik: The SEC CIK number.
+        series_id: Series ID to search for (e.g., 'S000004310' for IVV).
+
+    Returns:
+        Accession number of the matching filing, or None if not found.
+    """
+    # Use SEC full-text search API to find filings containing the series_id
+    search_url = f"https://efts.sec.gov/LATEST/search-index?q=%22{series_id}%22&forms=NPORT-P"
+
+    try:
+        text = await _fetch_with_rate_limit(session, search_url)
+        data = json.loads(text)
+
+        hits = data.get("hits", {}).get("hits", [])
+        cik_padded = cik.lstrip("0").zfill(10)
+
+        # Find the most recent filing for our CIK
+        best_accession = None
+        best_date = ""
+
+        for hit in hits:
+            source = hit.get("_source", {})
+            hit_ciks = source.get("ciks", [])
+
+            # Check if this filing is for our CIK
+            if cik_padded in hit_ciks or cik.lstrip("0") in [c.lstrip("0") for c in hit_ciks]:
+                file_date = source.get("file_date", "")
+                accession = source.get("adsh", "")
+
+                if file_date > best_date:
+                    best_date = file_date
+                    best_accession = accession
+
+        if best_accession:
+            logger.info(f"Found filing {best_accession} for series {series_id} via search")
+            return best_accession
+
+    except Exception as e:
+        logger.debug(f"Search API error for series {series_id}: {e}")
+
+    return None
+
+
+async def _get_latest_nport_url(
+    session: aiohttp.ClientSession, cik: str, series_id: Optional[str] = None
+) -> Optional[str]:
+    """Get the URL of the latest N-PORT filing for a CIK and optional series.
+
+    Args:
+        session: The aiohttp session.
+        cik: The SEC CIK number.
+        series_id: Optional series ID to filter for (e.g., 'S000004310' for IVV).
 
     Returns:
         URL to the N-PORT XML filing, or None if not found.
     """
-    # Use SEC EDGAR API to get filings
     cik_padded = cik.lstrip("0").zfill(10)
-    submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
 
-    try:
-        text = await _fetch_with_rate_limit(session, submissions_url)
-        data = json.loads(text)
+    # If series_id provided, try to find the specific filing via search API first
+    accession_to_use = None
+    if series_id:
+        accession_to_use = await _search_nport_by_series(session, cik, series_id)
 
-        # Find most recent N-PORT filing
-        filings = data.get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        accession_numbers = filings.get("accessionNumber", [])
+    # If search found a filing, use it; otherwise fall back to submissions API
+    if not accession_to_use:
+        submissions_url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
 
-        for i, form in enumerate(forms):
-            if form in ("NPORT-P", "NPORT-P/A"):
-                accession = accession_numbers[i]
-                accession_no_dash = accession.replace("-", "")
+        try:
+            text = await _fetch_with_rate_limit(session, submissions_url)
+            data = json.loads(text)
 
-                # Get the filing index to find the XML file
-                index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/index.json"
-                index_text = await _fetch_with_rate_limit(session, index_url)
-                index_data = json.loads(index_text)
+            filings = data.get("filings", {}).get("recent", {})
+            forms = filings.get("form", [])
+            accession_numbers = filings.get("accessionNumber", [])
 
-                # Look for the primary XML file (usually ends with .xml and contains nport)
-                for item in index_data.get("directory", {}).get("item", []):
-                    name = item.get("name", "")
-                    if name.endswith(".xml") and "nport" in name.lower():
-                        filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/{name}"
-                        logger.info(f"Found N-PORT XML file: {name}")
-                        return filing_url
+            # Find first NPORT filing
+            for i, form in enumerate(forms):
+                if form in ("NPORT-P", "NPORT-P/A"):
+                    accession_to_use = accession_numbers[i]
+                    break
 
-                # Fallback: look for any XML file that's not the primary document
-                for item in index_data.get("directory", {}).get("item", []):
-                    name = item.get("name", "")
-                    if name.endswith(".xml"):
-                        filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/{name}"
-                        logger.info(f"Found XML file: {name}")
-                        return filing_url
+        except Exception as e:
+            logger.error(f"Error fetching submissions for CIK {cik}: {e}")
+            return None
 
+    if not accession_to_use:
         logger.warning(f"No N-PORT filing found for CIK {cik}")
         return None
 
+    # Get the filing index to find the XML file
+    accession_no_dash = accession_to_use.replace("-", "")
+    index_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/index.json"
+
+    try:
+        index_text = await _fetch_with_rate_limit(session, index_url)
+        index_data = json.loads(index_text)
+
+        # Find the XML file name
+        xml_name = None
+        for item in index_data.get("directory", {}).get("item", []):
+            name = item.get("name", "")
+            if name.endswith(".xml") and "nport" in name.lower():
+                xml_name = name
+                break
+        if not xml_name:
+            for item in index_data.get("directory", {}).get("item", []):
+                name = item.get("name", "")
+                if name.endswith(".xml"):
+                    xml_name = name
+                    break
+
+        if xml_name:
+            filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_padded}/{accession_no_dash}/{xml_name}"
+            logger.info(f"Found N-PORT XML file: {xml_name}")
+            return filing_url
+
     except Exception as e:
-        logger.error(f"Error fetching filings for CIK {cik}: {e}")
-        return None
+        logger.error(f"Error fetching filing index for {accession_to_use}: {e}")
+
+    return None
 
 
 def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[Holding]:
@@ -373,8 +445,10 @@ async def get_etf_holdings(ticker: str, force_refresh: bool = False) -> Optional
     etf_info = ETF_INFO[ticker]
 
     async with aiohttp.ClientSession() as session:
-        # Get latest N-PORT filing URL
-        filing_url = await _get_latest_nport_url(session, etf_info["cik"])
+        # Get latest N-PORT filing URL (pass series_id to find correct filing for multi-fund trusts)
+        filing_url = await _get_latest_nport_url(
+            session, etf_info["cik"], etf_info.get("series_id")
+        )
         if not filing_url:
             return None
 
