@@ -1,7 +1,6 @@
 """Tests for overlap calculation logic."""
 
-import pytest
-from app.overlap import calculate_overlap, OverlapResult, OverlappingHolding
+from app.overlap import calculate_overlap, OverlappingHolding
 from app.sec_parser import ETFHoldings, Holding
 
 
@@ -70,7 +69,9 @@ class TestCalculateOverlap:
             ticker="ETF2",
             name="Test ETF 2",
             holdings=[
-                Holding(name="Apple Inc", cusip="037833100", percentage=5.0),  # Lower weight
+                Holding(
+                    name="Apple Inc", cusip="037833100", percentage=5.0
+                ),  # Lower weight
                 Holding(name="Tesla Inc", cusip="88160R101", percentage=7.0),
             ],
         )

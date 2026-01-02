@@ -40,13 +40,13 @@ ETF_INFO = {
     },
     "VOO": {
         "name": "Vanguard S&P 500 ETF",
-        "cik": "0000102909",
-        "series_id": "S000584",
+        "cik": "0000036405",
+        "series_id": "S000002839",
     },
     "VTI": {
         "name": "Vanguard Total Stock Market ETF",
-        "cik": "0000102909",
-        "series_id": "S000002845",
+        "cik": "0000036405",
+        "series_id": "S000002848",
     },
 }
 
@@ -190,7 +190,9 @@ async def _search_nport_by_series(
         Accession number of the matching filing, or None if not found.
     """
     # Use SEC full-text search API to find filings containing the series_id
-    search_url = f"https://efts.sec.gov/LATEST/search-index?q=%22{series_id}%22&forms=NPORT-P"
+    search_url = (
+        f"https://efts.sec.gov/LATEST/search-index?q=%22{series_id}%22&forms=NPORT-P"
+    )
 
     try:
         text = await _fetch_with_rate_limit(session, search_url)
@@ -208,7 +210,9 @@ async def _search_nport_by_series(
             hit_ciks = source.get("ciks", [])
 
             # Check if this filing is for our CIK
-            if cik_padded in hit_ciks or cik.lstrip("0") in [c.lstrip("0") for c in hit_ciks]:
+            if cik_padded in hit_ciks or cik.lstrip("0") in [
+                c.lstrip("0") for c in hit_ciks
+            ]:
                 file_date = source.get("file_date", "")
                 accession = source.get("adsh", "")
 
@@ -217,7 +221,9 @@ async def _search_nport_by_series(
                     best_accession = accession
 
         if best_accession:
-            logger.info(f"Found filing {best_accession} for series {series_id} via search")
+            logger.info(
+                f"Found filing {best_accession} for series {series_id} via search"
+            )
             return best_accession
 
     except Exception as e:
@@ -305,7 +311,9 @@ async def _get_latest_nport_url(
     return None
 
 
-def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[Holding]:
+def _parse_nport_xml(
+    xml_content: str, series_id: Optional[str] = None
+) -> list[Holding]:
     """Parse N-PORT XML content to extract holdings.
 
     Args:
@@ -329,7 +337,7 @@ def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[
         try:
             # Remove any BOM or leading whitespace
             cleaned = xml_content.strip()
-            if cleaned.startswith('\ufeff'):
+            if cleaned.startswith("\ufeff"):
                 cleaned = cleaned[1:]
             root = ET.fromstring(cleaned)
         except ET.ParseError as e2:
@@ -363,7 +371,11 @@ def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[
     # Approach 3: Try without namespace using local-name()
     if not invstOrSecs:
         # Use iter to find elements by local name
-        invstOrSecs = [elem for elem in root.iter() if elem.tag.endswith("}invstOrSec") or elem.tag == "invstOrSec"]
+        invstOrSecs = [
+            elem
+            for elem in root.iter()
+            if elem.tag.endswith("}invstOrSec") or elem.tag == "invstOrSec"
+        ]
 
     logger.info(f"Found {len(invstOrSecs)} investment/security elements")
 
@@ -388,27 +400,41 @@ def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[
 
             # Extract name
             name_elem = find_elem(inv, "name")
-            name = name_elem.text.strip() if name_elem is not None and name_elem.text else "Unknown"
+            name = (
+                name_elem.text.strip()
+                if name_elem is not None and name_elem.text
+                else "Unknown"
+            )
 
             # Extract CUSIP
             cusip_elem = find_elem(inv, "cusip")
-            cusip = cusip_elem.text.strip() if cusip_elem is not None and cusip_elem.text else None
+            cusip = (
+                cusip_elem.text.strip()
+                if cusip_elem is not None and cusip_elem.text
+                else None
+            )
 
             # Extract percentage of net assets
             pct_elem = find_elem(inv, "pctVal")
-            percentage = float(pct_elem.text) if pct_elem is not None and pct_elem.text else 0.0
+            percentage = (
+                float(pct_elem.text) if pct_elem is not None and pct_elem.text else 0.0
+            )
 
             # Extract value
             val_elem = find_elem(inv, "valUSD")
-            value = float(val_elem.text) if val_elem is not None and val_elem.text else None
+            value = (
+                float(val_elem.text) if val_elem is not None and val_elem.text else None
+            )
 
             if percentage > 0:  # Only include holdings with positive weight
-                holdings.append(Holding(
-                    name=name,
-                    cusip=cusip,
-                    percentage=percentage,
-                    value=value,
-                ))
+                holdings.append(
+                    Holding(
+                        name=name,
+                        cusip=cusip,
+                        percentage=percentage,
+                        value=value,
+                    )
+                )
         except (AttributeError, ValueError) as e:
             logger.debug(f"Error parsing holding: {e}")
             continue
@@ -419,7 +445,9 @@ def _parse_nport_xml(xml_content: str, series_id: Optional[str] = None) -> list[
     return holdings
 
 
-async def get_etf_holdings(ticker: str, force_refresh: bool = False) -> Optional[ETFHoldings]:
+async def get_etf_holdings(
+    ticker: str, force_refresh: bool = False
+) -> Optional[ETFHoldings]:
     """Get holdings for an ETF by ticker.
 
     Args:
@@ -486,6 +514,5 @@ def get_available_etfs() -> list[dict]:
         List of ETF info dictionaries with ticker and name.
     """
     return [
-        {"ticker": ticker, "name": info["name"]}
-        for ticker, info in ETF_INFO.items()
+        {"ticker": ticker, "name": info["name"]} for ticker, info in ETF_INFO.items()
     ]

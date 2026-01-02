@@ -16,8 +16,12 @@ def mock_holdings() -> ETFHoldings:
         name="SPDR S&P 500 ETF Trust",
         holdings=[
             Holding(name="Apple Inc", cusip="037833100", percentage=7.0, value=1000000),
-            Holding(name="Microsoft Corp", cusip="594918104", percentage=6.5, value=950000),
-            Holding(name="Amazon.com Inc", cusip="023135106", percentage=3.5, value=500000),
+            Holding(
+                name="Microsoft Corp", cusip="594918104", percentage=6.5, value=950000
+            ),
+            Holding(
+                name="Amazon.com Inc", cusip="023135106", percentage=3.5, value=500000
+            ),
         ],
     )
 
@@ -73,7 +77,9 @@ class TestGetHoldings:
             mock_get.return_value = mock_holdings
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 response = await client.get("/api/holdings/SPY")
 
         assert response.status_code == 200
@@ -89,7 +95,9 @@ class TestGetHoldings:
             mock_get.return_value = None
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 response = await client.get("/api/holdings/SPY")
 
         assert response.status_code == 503
@@ -161,7 +169,9 @@ class TestOverlapAnalysis:
 
         with patch("app.main.get_etf_holdings", side_effect=mock_get_holdings):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
                 response = await client.post(
                     "/api/overlap",
                     json={"ticker1": "SPY", "ticker2": "QQQ"},

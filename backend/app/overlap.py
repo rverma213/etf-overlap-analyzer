@@ -70,13 +70,15 @@ def calculate_overlap(holdings1: ETFHoldings, holdings2: ETFHoldings) -> Overlap
             overlap_contribution = min(h1.percentage, h2.percentage)
             total_overlap += overlap_contribution
 
-            overlapping.append(OverlappingHolding(
-                name=h1.name,
-                cusip=h1.cusip,
-                weight_etf1=h1.percentage,
-                weight_etf2=h2.percentage,
-                overlap_contribution=overlap_contribution,
-            ))
+            overlapping.append(
+                OverlappingHolding(
+                    name=h1.name,
+                    cusip=h1.cusip,
+                    weight_etf1=h1.percentage,
+                    weight_etf2=h2.percentage,
+                    overlap_contribution=overlap_contribution,
+                )
+            )
 
     # Sort by overlap contribution descending
     overlapping.sort(key=lambda x: x.overlap_contribution, reverse=True)
